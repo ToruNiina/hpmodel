@@ -11,14 +11,15 @@ program hpmodel
   integer, parameter     :: trajectory_file = 30
   integer, parameter     :: structure_file  = 40
   integer, parameter     :: log_file        = 50
-  type(protein)          :: chain, min_structure
+  real,    parameter     :: kB              = 1.0
+
+  type(protein)          :: chain, pre_structure, min_structure
   character, allocatable :: seq(:)
-  integer  , allocatable :: seed(:)
+  integer,   allocatable :: seed(:), corner_idx(:), crank_idx(:)
   logical                :: reject
-  integer                :: num_residue, timestep, seedsize
-  integer                :: trial_move, random_index, direction
-  integer                :: E, Epre, Emin, i, step
-  real, parameter        :: kB = 1.0
+  integer                :: num_residue, num_local, num_corner, num_crank
+  integer                :: E, Epre, Emin, i, step, timestep, seedsize
+  integer                :: c_rotation, c_corner, c_crank, c_total
   real                   :: T, dT, rnd
 
   open(log_file, file="hpmodel.log")
@@ -31,7 +32,14 @@ program hpmodel
     allocate(chain%hp(num_residue))
     allocate(chain%x(num_residue))
     allocate(chain%y(num_residue))
-    allocate(chain%local(num_residue-2))
+
+    num_local  = num_residue - 2
+    num_corner = num_local - 2
+    num_crank  = num_local - 3
+
+    allocate(chain%local(num_local))
+    allocate(corner_idx(num_corner))
+    allocate(crank_idx(num_crank))
 
     read(input_file, '(i)') timestep
     write(log_file, *) "step = ", timestep
@@ -72,6 +80,7 @@ program hpmodel
     chain%x(i) = 0
     chain%y(i) = i-1
   end do
+  pre_structure = chain
 
   E = 0
   Epre = 0
@@ -83,23 +92,30 @@ program hpmodel
   call write_structure(trajectory_file, chain)
 
   do step = 1, timestep
-    ! trial move
-!     call random_number(rnd)
-!     trial_move = rnd * 3
-!     select case(trial_move)
-!       case (0)
-        call rotation(chain, random_index, direction)
-!       case (1)
-!         call corner_flip(chain, random_index)
-!       case (2)
-!         call crank_shaft(chain, random_index)
-!       case default
-!         write(*, *) "invalid random number"
-!         stop
-!     end select
+
+    ! choose trial move
+    call count_rotation(chain, c_rotation)
+    call count_corner(chain, c_corner, corner_idx, num_corner)
+    call count_crank(chain, c_crank, crank_idx, num_crank)
+    c_total = c_rotation + c_corner + c_crank
+
+    call random_number(rnd)
+    i = rnd * c_total + 1
+    if(i <= c_rotation) then
+      call rotation(chain, i)
+    else if(i <= c_rotation + c_corner) then
+      i = i - c_rotation
+      call corner_flip(chain, i, corner_idx, num_corner)
+    else if(i <= c_total) then
+      i = i - c_rotation - c_corner
+      call crank_shaft(chain, i, crank_idx, num_crank)
+    else
+      write(*, *) "invalid index", i
+      stop
+    end if
+    
     call update_structure(chain) !< transform local->xy
 
-    ! Metropolis-Hastings update
     call calc_energy(chain, E)
 
     reject = .false.
@@ -113,27 +129,17 @@ program hpmodel
     endif
 
     if(reject) then
-!         select case(trial_move)
-!           case (0)
-      call restore_rotation(chain, random_index, direction)
-!           case (1)
-!             call restore_corner_flip(chain, random_index)
-!           case (2)
-!             call restore_crank_shaft(chain, random_index)
-!           case default
-!             write(*, *) "invalid trial move"
-!             stop
-!         end select
-      call update_structure(chain)
+      chain = pre_structure
       E = Epre
     else
-      Epre = E !< update
-    end if
+      pre_structure = chain
+      Epre = E
 
-    if(Emin > E) then
-      Emin = E
-      min_structure = chain
-    endif
+      if(Emin > E) then
+        Emin = E
+        min_structure = chain
+      endif
+    end if
 
     write(energy_file, *), step, E
     call write_structure(trajectory_file, chain)
@@ -159,77 +165,206 @@ program hpmodel
   deallocate(chain%y)
   deallocate(chain%local)
   deallocate(chain%hp)
+  deallocate(corner_idx)
+  deallocate(crank_idx)
 
 end program hpmodel
 
-subroutine rotation(chain, random_index, direction)
+subroutine rotation(chain, idx)
+  implicit none
   type protein
     logical, allocatable :: hp(:)
     integer, allocatable :: x(:), y(:), local(:)
   end type protein
 
   type(protein), intent(inout) :: chain
-  integer, intent(out)         :: random_index, direction
-  integer                      :: num_local, trial
+  integer,       intent(in)    :: idx
   real                         :: rnd
 
-  num_local = size(chain%local)
+  if(idx > size(chain%local)) then
+    write(*,*) "invalid rotation index: ", idx
+    stop
+  end if
 
   call random_number(rnd)
-  random_index = rnd * num_local + 1
-  direction = chain%local(random_index)
-
-  call random_number(rnd)
-  select case (direction)
+  select case (chain%local(idx))
     case (1)
       if(rnd < 0.5) then
-        chain%local(random_index) = 0
+        chain%local(idx) = 0
       else
-        chain%local(random_index) = -1
+        chain%local(idx) = -1
       end if
     case (0)
       if(rnd < 0.5) then
-        chain%local(random_index) = 1
+        chain%local(idx) = 1
       else
-        chain%local(random_index) = -1
+        chain%local(idx) = -1
       end if
     case (-1)
       if(rnd < 0.5) then
-        chain%local(random_index) = 1
+        chain%local(idx) = 1
       else
-        chain%local(random_index) = 0
+        chain%local(idx) = 0
       end if
     case default
-      write(*, *) "invalid local value", direction
+      write(*, *) "invalid local value", chain%local
       stop
   end select
 
   return
 end subroutine rotation
 
-subroutine restore_rotation(chain, random_index, direction)
+subroutine count_rotation(chain, c)
+  implicit none
   type protein
     logical, allocatable :: hp(:)
     integer, allocatable :: x(:), y(:), local(:)
   end type protein
 
+  type(protein), intent(in)    :: chain
+  integer,       intent(out)   :: c
+
+  c = size(chain%local)
+  return
+end subroutine count_rotation
+
+subroutine corner_flip(chain, idx, indices, n)
+  implicit none
+  type protein
+    logical, allocatable :: hp(:)
+    integer, allocatable :: x(:), y(:), local(:)
+  end type protein
+
+  integer,       intent(in)    :: idx, n
+  integer,       intent(in)    :: indices(n)
   type(protein), intent(inout) :: chain
-  integer, intent(in)          :: random_index, direction
-  
-  chain%local(random_index) = direction
+  integer                      :: local_index, i, j, k
+
+  if (idx > n) then
+    write(*,*) "invalid corner index: ", idx
+    stop
+  end if
+
+  local_index = indices(idx)
+
+  if (local_index > size(chain%local)-2 .or. local_index == 0) then
+    write(*,*) "invalid corner local index: ", local_index
+    stop
+  end if
+
+  i = chain%local(local_index)
+  j = chain%local(local_index+1)
+  k = chain%local(local_index+2)
+
+  chain%local(local_index)   = i+j
+  chain%local(local_index+1) = -j
+  chain%local(local_index+2) = j+k
 
   return
-end subroutine restore_rotation
+end subroutine corner_flip
+
+subroutine count_corner(chain, c, indices, n)
+  implicit none
+  type protein
+    logical, allocatable :: hp(:)
+    integer, allocatable :: x(:), y(:), local(:)
+  end type protein
+
+  integer,       intent(in)    :: n
+  integer,       intent(inout) :: indices(n)
+  type(protein), intent(inout) :: chain
+  integer,       intent(out)   :: c
+  integer                      :: i, num_local
+
+  indices = 0
+
+  c = 0
+  do i = 1, n
+    if (chain%local(i+1) == 0) then 
+      cycle
+    else if (abs(chain%local(i)   + chain%local(i+1)) == 2) then
+      cycle
+    else if (abs(chain%local(i+1) + chain%local(i+2)) == 2) then
+      cycle
+    else
+      c = c + 1
+      indices(c) = i
+    end if
+  end do
+
+  return
+end subroutine count_corner
+
+subroutine crank_shaft(chain, idx, indices, n)
+  implicit none
+  type protein
+    logical, allocatable :: hp(:)
+    integer, allocatable :: x(:), y(:), local(:)
+  end type protein
+
+  integer,       intent(in)    :: idx, n
+  integer,       intent(in)    :: indices(n)
+  type(protein), intent(inout) :: chain
+  integer                      :: local_index
+
+  if (idx > n) then
+    write(*,*) "invalid crank index: ", idx
+    stop
+  end if
+  local_index = indices(idx)
+
+  if (local_index > size(chain%local)-3 .or. local_index == 0) then
+    write(*,*) "invalid crank local index: ", local_index
+    stop
+  end if
+
+  chain%local(local_index)   = -chain%local(local_index)
+  chain%local(local_index+1) = -chain%local(local_index+1)
+  chain%local(local_index+2) = -chain%local(local_index+2)
+  chain%local(local_index+3) = -chain%local(local_index+3)
+
+  return
+end subroutine crank_shaft
+
+subroutine count_crank(chain, c, indices, n)
+  implicit none
+  type protein
+    logical, allocatable :: hp(:)
+    integer, allocatable :: x(:), y(:), local(:)
+  end type protein
+
+  integer,       intent(in)    :: n
+  type(protein), intent(in)    :: chain
+  integer,       intent(inout) :: indices(n)
+  integer,       intent(out)   :: c
+  integer                      :: i
+
+  indices = 0
+  c = 0
+  do i = 1, n
+    if (chain%local(i)   ==  1 .and. chain%local(i+1) == -1 .and. &
+        chain%local(i+2) == -1 .and. chain%local(i+3) ==  1 ) then
+      c = c + 1
+      indices(c) = i
+    else if (chain%local(i)   == -1 .and. chain%local(i+1) ==  1 .and. &
+             chain%local(i+2) ==  1 .and. chain%local(i+3) == -1 ) then
+      c = c + 1
+      indices(c) = i
+    end if
+  end do
+  return
+end subroutine count_crank
 
 subroutine update_structure(chain)
+  implicit none
   type protein
     logical, allocatable :: hp(:)
     integer, allocatable :: x(:), y(:), local(:)
   end type protein
 
   type(protein), intent(inout) :: chain
-  integer, allocatable :: vec(:)
-  integer              :: num_residue, sum_local
+  integer, allocatable         :: vec(:)
+  integer                      :: i, num_residue
 
   num_residue = size(chain%x)
   allocate(vec(num_residue-1))
@@ -268,6 +403,7 @@ subroutine update_structure(chain)
 end subroutine update_structure
 
 subroutine calc_energy(chain, E)
+  implicit none
   type protein
     logical, allocatable :: hp(:)
     integer, allocatable :: x(:), y(:), local(:)
@@ -304,6 +440,7 @@ subroutine calc_energy(chain, E)
 end subroutine calc_energy
 
 subroutine write_structure(trajectory_file, chain)
+  implicit none
   type protein
     logical, allocatable :: hp(:)
     integer, allocatable :: x(:), y(:), local(:)
