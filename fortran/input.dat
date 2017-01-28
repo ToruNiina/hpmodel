@@ -1,20 +1,3 @@
-18
-100000
-H
-P
-P
-H
-P
-P
-H
-P
-H
-P
-P
-H
-P
-H
-P
-H
-H
-H
+length     = 18
+total_step = 100000
+sequence   = HPPHPPHPHPPHPHPHHH

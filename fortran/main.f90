@@ -13,53 +13,19 @@ program hpmodel
   integer, parameter     :: log_file        = 50
   real,    parameter     :: kB              = 1.0
 
-  type(protein)          :: chain, pre_structure, min_structure
-  character, allocatable :: seq(:)
-  integer,   allocatable :: seed(:), corner_idx(:), crank_idx(:)
-  logical                :: reject
-  integer                :: num_residue, num_local, num_corner, num_crank
-  integer                :: E, Epre, Emin, i, step, timestep, seedsize
-  integer                :: c_rotation, c_corner, c_crank, c_total
-  real                   :: T, dT, rnd
+  type(protein)            :: chain, pre_structure, min_structure
+  integer,   allocatable   :: seed(:), corner_idx(:), crank_idx(:)
+  logical                  :: reject
+  integer                  :: num_residue, num_local, num_corner, num_crank
+  integer                  :: E, Epre, Emin, i, step, timestep, seedsize
+  integer                  :: c_rotation, c_corner, c_crank, c_total
+  real                     :: T, dT, rnd
 
   open(log_file, file="hpmodel.log")
 
   ! read input file
   open(input_file, file="input.dat", action="read")
-    read(input_file, '(i)') num_residue
-    write(log_file, *) "num_residue = ", num_residue
-
-    allocate(chain%hp(num_residue))
-    allocate(chain%x(num_residue))
-    allocate(chain%y(num_residue))
-
-    num_local  = num_residue - 2
-    num_corner = num_local - 2
-    num_crank  = num_local - 3
-
-    allocate(chain%local(num_local))
-    allocate(corner_idx(num_corner))
-    allocate(crank_idx(num_crank))
-
-    read(input_file, '(i)') timestep
-    write(log_file, *) "step = ", timestep
-
-    allocate(seq(num_residue))
-    read(input_file, '(a)') seq
-    write(log_file, *) "seq  = ", seq(1:num_residue)
-
-    do i=1, num_residue
-      if (seq(i) == 'H') then
-        chain%hp(i) = .true.
-      else if (seq(i) == 'P') then
-        chain%hp(i) = .false.
-      else
-        write(*,*) "invalid sequence: ", seq(i)
-        stop
-      end if
-    end do
-
-    deallocate(seq)
+    call read_file(input_file, chain, num_residue, timestep)
   close(input_file)
 
   ! generate seed
@@ -75,9 +41,15 @@ program hpmodel
   T = 1.0
   dT = 0.99995
 
+  num_local  = num_residue - 2
+  num_corner = num_local - 2
+  num_crank  = num_local - 3
+  allocate(corner_idx(num_corner))
+  allocate(crank_idx(num_crank))
+
   chain%local = 0
-  do i=1, num_residue
-    chain%x(i) = 0
+  chain%x     = 0
+  do i=1, size(chain%y)
     chain%y(i) = i-1
   end do
   pre_structure = chain
@@ -113,7 +85,7 @@ program hpmodel
       write(*, *) "invalid index", i
       stop
     end if
-    
+
     call update_structure(chain) !< transform local->xy
 
     call calc_energy(chain, E)
@@ -122,7 +94,7 @@ program hpmodel
     if(E > Epre) then
       if(E == 1) then !< collision
         reject = .true.
-      else 
+      else
         call random_number(rnd)
         reject = (rnd > exp((Epre - E) / (kB * T)))
       endif
@@ -169,6 +141,73 @@ program hpmodel
   deallocate(crank_idx)
 
 end program hpmodel
+
+subroutine read_file(input_file, chain, num_residue, total_step)
+  implicit none
+  type protein
+    logical, allocatable :: hp(:)
+    integer, allocatable :: x(:), y(:), local(:)
+  end type protein
+
+  type(protein), intent(inout) :: chain
+  integer,       intent(inout) :: total_step, num_residue
+  integer,       intent(in)    :: input_file
+
+  integer                      :: i, j, num_local
+  character(len=80)            :: buffer, valstr, seq
+
+  do while(.true.)
+    read(input_file, '(a80)', err=100, end=200), buffer
+
+    if(buffer(1:6) .eq. "length") then
+        i = index(buffer, "=")
+
+        valstr = buffer(i+1:)
+        read(valstr, *), num_residue
+        num_local  = num_residue - 2
+
+    else if(buffer(1:10) .eq. "total_step") then
+        i = index(buffer, "=")
+
+        valstr = buffer(i+1:)
+        read(valstr, *), total_step
+
+    else if(buffer(1:8) .eq. "sequence") then
+        i = index(buffer, "H")
+        j = index(buffer, "P")
+        if(j < i) i = j
+        seq = buffer(i:)
+
+    else
+        write(*, *) "WARNING: unknown input line: ", buffer
+    end if
+
+  end do
+
+100 continue !err
+    write(*, *) "file read error"
+    stop
+
+200 continue !EOF
+
+    allocate(chain%hp(num_residue))
+    allocate(chain%x(num_residue))
+    allocate(chain%y(num_residue))
+    allocate(chain%local(num_residue - 2))
+
+    do i=1, num_residue
+      if (seq(i:i) == 'H') then
+        chain%hp(i) = .true.
+      else if (seq(i:i) == 'P') then
+        chain%hp(i) = .false.
+      else
+        write(*,*) "invalid sequence: seq(", i, ") = ", seq(i:i)
+        stop
+      end if
+    end do
+
+    return
+end subroutine read_file
 
 subroutine rotation(chain, idx)
   implicit none
@@ -384,13 +423,13 @@ subroutine update_structure(chain)
       case (0)
         chain%x(i) = chain%x(i-1)
         chain%y(i) = chain%y(i-1) + 1
-      case (1) 
+      case (1)
         chain%x(i) = chain%x(i-1) + 1
         chain%y(i) = chain%y(i-1)
-      case (2) 
+      case (2)
         chain%x(i) = chain%x(i-1)
         chain%y(i) = chain%y(i-1) - 1
-      case (3) 
+      case (3)
         chain%x(i) = chain%x(i-1) - 1
         chain%y(i) = chain%y(i-1)
       case default
@@ -398,7 +437,7 @@ subroutine update_structure(chain)
         stop
     end select
   end do
-  
+
   return
 end subroutine update_structure
 
@@ -435,7 +474,7 @@ subroutine calc_energy(chain, E)
       end if
     end do
   end do
-  
+
   return
 end subroutine calc_energy
 
