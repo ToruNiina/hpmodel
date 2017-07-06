@@ -1,10 +1,15 @@
-program hpmodel
-  implicit none
+module hpmodel
+    implicit none
+    type protein
+        logical, allocatable :: hp(:)
+        integer, allocatable :: x(:), y(:), local(:)
+    end type
+end module hpmodel
 
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
+
+program main
+  use hpmodel
+  implicit none
 
   integer, parameter     :: input_file      = 10
   integer, parameter     :: energy_file     = 20
@@ -113,7 +118,7 @@ program hpmodel
       endif
     end if
 
-    write(energy_file, *), step, E
+    write(energy_file, *) step, E
     call write_structure(trajectory_file, chain)
 
     T = T * dT
@@ -140,14 +145,11 @@ program hpmodel
   deallocate(corner_idx)
   deallocate(crank_idx)
 
-end program hpmodel
+end program main
 
 subroutine read_file(input_file, chain, num_residue, total_step)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
 
   type(protein), intent(inout) :: chain
   integer,       intent(inout) :: total_step, num_residue
@@ -157,20 +159,20 @@ subroutine read_file(input_file, chain, num_residue, total_step)
   character(len=80)            :: buffer, valstr, seq
 
   do while(.true.)
-    read(input_file, '(a80)', err=100, end=200), buffer
+    read(input_file, '(a80)', err=100, end=200) buffer
 
     if(buffer(1:6) .eq. "length") then
         i = index(buffer, "=")
 
         valstr = buffer(i+1:)
-        read(valstr, *), num_residue
+        read(valstr, *) num_residue
         num_local  = num_residue - 2
 
     else if(buffer(1:10) .eq. "total_step") then
         i = index(buffer, "=")
 
         valstr = buffer(i+1:)
-        read(valstr, *), total_step
+        read(valstr, *) total_step
 
     else if(buffer(1:8) .eq. "sequence") then
         i = index(buffer, "H")
@@ -210,12 +212,8 @@ subroutine read_file(input_file, chain, num_residue, total_step)
 end subroutine read_file
 
 subroutine rotation(chain, idx)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
-
   type(protein), intent(inout) :: chain
   integer,       intent(in)    :: idx
   real                         :: rnd
@@ -254,11 +252,8 @@ subroutine rotation(chain, idx)
 end subroutine rotation
 
 subroutine count_rotation(chain, c)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
 
   type(protein), intent(in)    :: chain
   integer,       intent(out)   :: c
@@ -268,12 +263,8 @@ subroutine count_rotation(chain, c)
 end subroutine count_rotation
 
 subroutine corner_flip(chain, idx, indices, n)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
-
   integer,       intent(in)    :: idx, n
   integer,       intent(in)    :: indices(n)
   type(protein), intent(inout) :: chain
@@ -303,12 +294,8 @@ subroutine corner_flip(chain, idx, indices, n)
 end subroutine corner_flip
 
 subroutine count_corner(chain, c, indices, n)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
-
   integer,       intent(in)    :: n
   integer,       intent(inout) :: indices(n)
   type(protein), intent(inout) :: chain
@@ -335,12 +322,8 @@ subroutine count_corner(chain, c, indices, n)
 end subroutine count_corner
 
 subroutine crank_shaft(chain, idx, indices, n)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
-
   integer,       intent(in)    :: idx, n
   integer,       intent(in)    :: indices(n)
   type(protein), intent(inout) :: chain
@@ -366,11 +349,8 @@ subroutine crank_shaft(chain, idx, indices, n)
 end subroutine crank_shaft
 
 subroutine count_crank(chain, c, indices, n)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
 
   integer,       intent(in)    :: n
   type(protein), intent(in)    :: chain
@@ -395,11 +375,8 @@ subroutine count_crank(chain, c, indices, n)
 end subroutine count_crank
 
 subroutine update_structure(chain)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
 
   type(protein), intent(inout) :: chain
   integer, allocatable         :: vec(:)
@@ -442,12 +419,8 @@ subroutine update_structure(chain)
 end subroutine update_structure
 
 subroutine calc_energy(chain, E)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
-
   type(protein), intent(in)    :: chain
   integer,       intent(out)   :: E
   integer                      :: num_residue, i, j
@@ -479,22 +452,18 @@ subroutine calc_energy(chain, E)
 end subroutine calc_energy
 
 subroutine write_structure(trajectory_file, chain)
+  use hpmodel
   implicit none
-  type protein
-    logical, allocatable :: hp(:)
-    integer, allocatable :: x(:), y(:), local(:)
-  end type protein
-
   type(protein), intent(in) :: chain
   integer,       intent(in) :: trajectory_file
   integer                   :: num_residue, i
 
   num_residue = size(chain%x)
   do i=1, num_residue
-    write(trajectory_file, *), chain%x(i), chain%y(i)
+    write(trajectory_file, *) chain%x(i), chain%y(i)
   end do
-  write(trajectory_file, *), ""
-  write(trajectory_file, *), ""
+  write(trajectory_file, *) ""
+  write(trajectory_file, *) ""
 
   return
 end subroutine write_structure
